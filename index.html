@@ -1350,7 +1350,7 @@
       </section>
 
       <!-- SCRATCH-TO-REVEAL HEART -->
-      <section class="sec">
+      <section class="sec" id="scratchSection">
         <div class="rv-block">
           <span class="script" id="scratchSubtitle" style="font-size:2.1rem">A little surprise awaits</span>
           <h2>Scratch to Reveal</h2>
@@ -1380,7 +1380,7 @@
         </div>
 
         <div class="rv-block">
-          <span class="scratch-hint" id="scratchHint">Rub the emerald foil heart</span>
+          <span class="scratch-hint" id="scratchHint">Rub the emerald heart to continue</span>
           <a class="btn" id="calendarBtn" target="_blank" rel="noopener noreferrer" href="#">Save the Date</a>
           <br>
           <button class="text-link" id="resetScratchBtn" type="button">Reset heart foil</button>
@@ -1634,8 +1634,9 @@
         address: '100 Royal Heritage Avenue, Royal Garden Estate, Jaipur, Rajasthan',
         // Optional MP4 URL. When empty, a 60fps golden-hour palace courtyard film streams into the <video>.
         heroVideoUrl: '',
-        // Optional MP3 URL. Uses the wedding nasheed asset, with built-in synth fallback if offline.
+        // Primary MP3 URL (relative for standalone download), plus preview fallback and built-in synth fallback.
         musicUrl: 'wedding_nasheed.mp3',
+        fallbackMusicUrl: '/assets/aistudio/wedding_nasheed_fd755442.mp3',
         events: [
           {
             name: 'Mehendi',
@@ -1909,13 +1910,95 @@
       // ========================================================================
       let lenis = null;
       let isLocked = true;
+      let scratchUnlocked = false;
+      let touchStartY = 0;
+      let lastNudgeAt = 0;
 
-      // Prevent wheel / touch scroll while curtains are closed without altering body overflow/height
-      const preventLockedScroll = (e) => {
-        if (isLocked) e.preventDefault();
-      };
-      window.addEventListener('wheel', preventLockedScroll, { passive: false });
-      window.addEventListener('touchmove', preventLockedScroll, { passive: false });
+      function getScratchGateY() {
+        const sec = $('scratchSection');
+        if (!sec) return Infinity;
+        const ideal = sec.offsetTop - Math.max(12, (window.innerHeight - sec.offsetHeight) * 0.44);
+        return Math.max(0, Math.round(ideal));
+      }
+
+      function nudgeScratchHint() {
+        const now = Date.now();
+        if (now - lastNudgeAt < 700) return;
+        lastNudgeAt = now;
+        const hint = $('scratchHint');
+        if (hint) {
+          hint.textContent = 'Please scratch the heart to continue';
+          hint.style.color = '#8C6A32';
+        }
+        if (!reducedMotion && typeof gsap !== 'undefined') {
+          gsap.fromTo('#heartContainer', { scale: 1 }, { scale: 1.035, duration: 0.18, yoyo: true, repeat: 1, ease: 'power2.out' });
+        }
+      }
+
+      function clampToScratchGate() {
+        if (isLocked || scratchUnlocked) return;
+        const gateY = getScratchGateY();
+        if (window.scrollY > gateY) {
+          window.scrollTo(0, gateY);
+          if (lenis) lenis.scrollTo(gateY, { immediate: true, force: true });
+          nudgeScratchHint();
+        }
+      }
+
+      window.addEventListener('touchstart', (e) => {
+        if (e.touches && e.touches.length) touchStartY = e.touches[0].clientY;
+      }, { passive: true });
+
+      // Prevent wheel / touch scroll while curtains are closed OR past scratch gate before scratching
+      window.addEventListener('wheel', (e) => {
+        if (isLocked) {
+          e.preventDefault();
+          return;
+        }
+        if (!scratchUnlocked && e.deltaY > 0) {
+          const gateY = getScratchGateY();
+          if (window.scrollY >= gateY - 2) {
+            e.preventDefault();
+            clampToScratchGate();
+            nudgeScratchHint();
+          }
+        }
+      }, { passive: false });
+
+      window.addEventListener('touchmove', (e) => {
+        if (isLocked) {
+          e.preventDefault();
+          return;
+        }
+        if (!scratchUnlocked && e.touches && e.touches.length && e.target !== $('scratchCanvas')) {
+          const deltaY = touchStartY - e.touches[0].clientY;
+          const gateY = getScratchGateY();
+          if (deltaY > 2 && window.scrollY >= gateY - 2) {
+            e.preventDefault();
+            clampToScratchGate();
+            nudgeScratchHint();
+          }
+        }
+      }, { passive: false });
+
+      window.addEventListener('keydown', (e) => {
+        if (isLocked) {
+          if (['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Space', ' ', 'End', 'Home'].includes(e.key)) {
+            e.preventDefault();
+          }
+          return;
+        }
+        if (!scratchUnlocked && ['ArrowDown', 'PageDown', ' ', 'End'].includes(e.key)) {
+          const gateY = getScratchGateY();
+          if (window.scrollY >= gateY - 4) {
+            e.preventDefault();
+            clampToScratchGate();
+            nudgeScratchHint();
+          }
+        }
+      });
+
+      window.addEventListener('scroll', clampToScratchGate, { passive: true });
 
       if (typeof gsap !== 'undefined' && typeof ScrollTrigger !== 'undefined') {
         gsap.registerPlugin(ScrollTrigger);
@@ -1971,7 +2054,10 @@
             wheelMultiplier: 0.9
           });
           lenis.stop();
-          lenis.on('scroll', ScrollTrigger.update);
+          lenis.on('scroll', () => {
+            clampToScratchGate();
+            ScrollTrigger.update();
+          });
           gsap.ticker.add((time) => {
             lenis.raf(time * 1000);
           });
@@ -2264,12 +2350,36 @@
         musicTimer = setInterval(scheduleAhead, 180);
       }
 
+      function playCustomAudio() {
+        if (!customAudio) return;
+        customAudio.muted = isMuted;
+        const p = customAudio.play();
+        if (p && typeof p.then === 'function') {
+          p.then(() => {
+            if (typeof gsap !== 'undefined') {
+              gsap.to(customAudio, { volume: 0.6, duration: 1.4, ease: 'power2.out' });
+            } else {
+              customAudio.volume = 0.6;
+            }
+          }).catch(() => {});
+        } else {
+          customAudio.volume = 0.6;
+        }
+      }
+
       if (CONFIG.musicUrl) {
+        let triedFallback = false;
         customAudio = new Audio(CONFIG.musicUrl);
         customAudio.preload = 'auto';
         customAudio.loop = true;
         customAudio.volume = 0;
         customAudio.addEventListener('error', () => {
+          if (!triedFallback && CONFIG.fallbackMusicUrl) {
+            triedFallback = true;
+            customAudio.src = CONFIG.fallbackMusicUrl;
+            if (audioStarted) playCustomAudio();
+            return;
+          }
           customAudio = null;
           if (audioStarted) startSynthFallback();
         });
@@ -2281,22 +2391,7 @@
         audioToggle.classList.add('visible');
 
         if (customAudio) {
-          customAudio.muted = isMuted;
-          const playPromise = customAudio.play();
-          if (playPromise && typeof playPromise.then === 'function') {
-            playPromise.then(() => {
-              if (typeof gsap !== 'undefined') {
-                gsap.to(customAudio, { volume: 0.6, duration: 1.6, ease: 'power2.out' });
-              } else {
-                customAudio.volume = 0.6;
-              }
-            }).catch(() => {
-              customAudio = null;
-              startSynthFallback();
-            });
-          } else {
-            customAudio.volume = 0.6;
-          }
+          playCustomAudio();
           return;
         }
 
@@ -2576,7 +2671,8 @@
 
         initialOpaque = countOpaqueDownscaled() || 1;
         $('scratchSubtitle').textContent = 'A little surprise awaits';
-        $('scratchHint').textContent = 'Rub the emerald foil heart';
+        $('scratchHint').textContent = scratchUnlocked ? 'Rub the emerald foil heart' : 'Rub the emerald heart to continue';
+        $('scratchHint').style.color = '';
       }
 
       function getCanvasPoint(e) {
@@ -2609,7 +2705,10 @@
         if (cleared) return;
         cleared = true;
         scratchCanvas.style.pointerEvents = 'none';
-        $('scratchHint').textContent = 'Beautifully revealed';
+
+        const hint = $('scratchHint');
+        hint.textContent = 'Beautifully revealed — scroll to continue \u2193';
+        hint.style.color = '#2F3E2C';
 
         const sub = $('scratchSubtitle');
         sub.textContent = 'Our forever begins';
@@ -2621,6 +2720,11 @@
           scratchCanvas.style.opacity = '0';
         }
         fireHeartConfetti();
+
+        setTimeout(() => {
+          scratchUnlocked = true;
+          if (typeof ScrollTrigger !== 'undefined') ScrollTrigger.refresh();
+        }, 650);
       }
 
       function scratchStroke(e) {
